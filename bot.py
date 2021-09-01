@@ -1,14 +1,13 @@
+import asyncio
+
 import discord
-from discord import player
-from discord.channel import VoiceChannel
-from discord.ext import commands,  tasks
 import youtube_dl
-from random import choice
-from youtube_dl import YoutubeDL
 
-# start
+from discord.ext import commands
 
+# Suppress noise about console usage from errors
 youtube_dl.utils.bug_reports_message = lambda: ''
+
 
 ytdl_format_options = {
     'format': 'bestaudio/best',
@@ -29,6 +28,7 @@ ffmpeg_options = {
 }
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
+
 
 class YTDLSource(discord.PCMVolumeTransformer):
     def __init__(self, source, *, data, volume=0.5):
@@ -51,69 +51,101 @@ class YTDLSource(discord.PCMVolumeTransformer):
         filename = data['url'] if stream else ytdl.prepare_filename(data)
         return cls(discord.FFmpegPCMAudio(filename, **ffmpeg_options), data=data)
 
-# end
+
+class Music(commands.Cog):
+    def __init__(self, bot):
+        self.bot = bot
+
+    @commands.command()
+    async def join(self, ctx, *, channel: discord.VoiceChannel):
+        """Joins a voice channel"""
+
+        if ctx.voice_client is not None:
+            return await ctx.voice_client.move_to(channel)
+
+        await channel.connect()
 
 
-client = commands.Bot(command_prefix='!')
+    @commands.command()
+    async def pause(self, ctx):
+        """pauses the song"""
 
-status = ['Jamming out music!', 'Eating!', 'Sleeping!']
+        ctx.voice_client.pause()
+            
+    @commands.command()
+    async def resume(self, ctx):
+        """resume the song"""
 
-@client.event
+        ctx.voice_client.resume()
+
+
+
+    @commands.command()
+    async def play(self, ctx, *, query):
+        """Plays a file from the local filesystem"""
+
+        source = discord.PCMVolumeTransformer(discord.FFmpegPCMAudio(query))
+        ctx.voice_client.play(source, after=lambda e: print(f'Player error: {e}') if e else None)
+
+        await ctx.send(f'Now playing: {query}')
+
+    @commands.command()
+    async def yt(self, ctx, *, url):
+        """Plays from a url (almost anything youtube_dl supports)"""
+
+        async with ctx.typing():
+            player = await YTDLSource.from_url(url, loop=self.bot.loop)
+            ctx.voice_client.play(player, after=lambda e: print(f'Player error: {e}') if e else None)
+
+        await ctx.send(f'Now playing: {player.title}')
+
+    @commands.command()
+    async def stream(self, ctx, *, url):
+        """Streams from a url (same as yt, but doesn't predownload)"""
+
+        async with ctx.typing():
+            player = await YTDLSource.from_url(url, loop=self.bot.loop, stream=True)
+            ctx.voice_client.play(player, after=lambda e: print(f'Player error: {e}') if e else None)
+
+        await ctx.send(f'Now playing: {player.title}')
+
+    @commands.command()
+    async def volume(self, ctx, volume: int):
+        """Changes the player's volume"""
+
+        if ctx.voice_client is None:
+            return await ctx.send("Not connected to a voice channel.")
+
+        ctx.voice_client.source.volume = volume / 100
+        await ctx.send(f"Changed volume to {volume}%")
+
+    @commands.command()
+    async def stop(self, ctx):
+        """Stops and disconnects the bot from voice"""
+
+        await ctx.voice_client.disconnect()
+
+    @play.before_invoke
+    @yt.before_invoke
+    @stream.before_invoke
+    async def ensure_voice(self, ctx):
+        if ctx.voice_client is None:
+            if ctx.author.voice:
+                await ctx.author.voice.channel.connect()
+            else:
+                await ctx.send("You are not connected to a voice channel.")
+                raise commands.CommandError("Author not connected to a voice channel.")
+        elif ctx.voice_client.is_playing():
+            ctx.voice_client.stop()
+
+bot = commands.Bot(command_prefix=commands.when_mentioned_or("!"),
+                   description='Relatively simple music bot')
+
+@bot.event
 async def on_ready():
-    change_status.start()
-    print('Bot is online!')
+    print(f'Logged in as {bot.user} (ID: {bot.user.id})')
+    print('------')
 
-@client.command(name='ping', help='this command returns the latnecy')
-async def ping(ctx):
-    await ctx.send(f'**pong!** latnecy: {round(client.latency * 1000)}ms')
+bot.add_cog(Music(bot))
 
-@client.command(name='hello', help='this command returns the hello message')
-async def hello(ctx):
-    responses  = ['***grumble*** Why did you wake me up?', 'fuck you!', 'Hello, how are you?', 'love being here!', 'Hi', '**Wasssuup!**']
-    await ctx.send(choice(responses))
-
-@client.command(name='die', help='this command returns the die message')
-async def hello(ctx):
-    responses  = ['Nooooo1', 'Fuck you!', 'Don\'t do that to me!', 'Hate you!', 'Good bye!']
-    await ctx.send(choice(responses))
-
-@client.command(name='play', help='this command plays a song')
-async def play(ctx, url):
-    if not ctx.message.author.voice:
-        await ctx.send("You are not connected to a voice channel")
-        return
-
-    else:
-        channel = ctx.message.author.voice.channel
-
-    await channel.connect()
-    server = ctx.message.guild 
-    voice_channel = server.voice_client
-
-    async with ctx.typing():
-        player = await YTDLSource.from_url(url, loop=client.loop)
-        voice_channel.play(player, after=lambda e: print('Player error: %s' % e) if e else None)
-
-    await ctx.send('**Now playing:** {}'.format(player.title))
-
-@client.command(name='stop', help='this command stops a song')
-async def stop(ctx):
-    voice_client = ctx.message.guild.voice_client
-    await voice_client.disconnect()
-  
-@client.command(name='pause', help='this command pause a song')
-async def stop(ctx):
-    voice_client = ctx.message.guild.voice_client
-    await voice_client.pause()
-
-@client.command(name='resume', help='this command resume a song')
-async def stop(ctx):
-    voice_client = ctx.message.guild.voice_client
-    await voice_client.resume()
-
-
-@tasks.loop(seconds=20)
-async def change_status():
-    await client.change_presence(activity=discord.Game(choice(status)))
-
-client.run('ODgyMjYyODA3ODI2MDM4ODU0.YS41RQ.jEfxDuj6IQ2GkMNdOpjdhKF-bOc')
+bot.run('ODgyMjYyODA3ODI2MDM4ODU0.YS41RQ.jEfxDuj6IQ2GkMNdOpjdhKF-bOc')
