@@ -1,5 +1,6 @@
 import asyncio
-
+import ctypes
+import ctypes.util
 import discord
 import youtube_dl
 
