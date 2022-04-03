@@ -1,6 +1,4 @@
 import asyncio
-import ctypes
-import ctypes.util
 import discord
 import youtube_dl
 
@@ -25,14 +23,15 @@ ytdl_format_options = {
 }
 
 ffmpeg_options = {
-    'options': '-vn'
+    'options': '-vn',
+    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5"
 }
 
 ytdl = youtube_dl.YoutubeDL(ytdl_format_options)
 
 
 class YTDLSource(discord.PCMVolumeTransformer):
-    def __init__(self, source, *, data, volume=0.5):
+    def __init__(self, source, *, data, volume=1):
         super().__init__(source, volume)
 
         self.data = data
